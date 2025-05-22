@@ -1,6 +1,23 @@
 # a11y-app
 
-Small utility to print properties on an accessible application or the whole bus tree.
+Small utility to print properties on an accessible application (or the whole bus tree).
+
+## Example output
+
+```console
+luuk@n ~> a11y-app kate
+Using bus name: :1.217
+Properties of the root accessible object:
++----------------+-------------------------------------------------------------------------------------------------------------------------------------------------+
+| Name:          | kate                                                                                                                                            |
+| Description:   | /usr/bin/kate                                                                                                                                   |
+| Locale:        | Error: org.freedesktop.DBus.Error.UnknownInterface: Interface org.a11y.atspi.Accessible was not found in object /org/a11y/atspi/accessible/root |
+| Accessible ID: | org.kde.kate                                                                                                                                    |
+| Child count:   | 1                                                                                                                                               |
+| Parent:        | ObjectRef { name: OwnedUniqueName(":1.217"), path: OwnedObjectPath(ObjectPath("/org/a11y/atspi/null")) }                                        |
+| Help text:     | --- No value ---                                                                                                                                |
++----------------+-------------------------------------------------------------------------------------------------------------------------------------------------+
+```
 
 ## Building
 
