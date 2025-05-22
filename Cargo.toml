@@ -1,0 +1,17 @@
+[package]
+name = "a11y-app"
+version = "0.1.1"
+edition = "2021"
+
+
+[dependencies]
+futures = { version = "0.3.31" }
+atspi = { version = "0.26.3", default-features = false, features = [
+    "proxies-tokio",
+    "tokio",
+    "zbus",
+] }
+display_tree = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+argh = "0.1.13"
+zbus = { version = "5.7.1", features = ["tokio"] }
