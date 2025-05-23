@@ -245,7 +245,7 @@ fn from_app_name(
             (false, true, _) => {
                 println!("Sought {sought_after}, found application: {name}");
 
-                if get_user_yn_response("Would you like to add this application? (Y/n)")? {
+                if get_user_yn_response("Would you like to add this application?")? {
                     matching_apps.push((name, bus_name.into()));
                 } else {
                     continue;
@@ -255,7 +255,7 @@ fn from_app_name(
             // Case-insensitive partial match
             (false, false, true) => {
                 println!("Sought {sought_after}, partially matches application: {name}");
-                if get_user_yn_response("Would you like to add this application? (Y/n)")? {
+                if get_user_yn_response("Would you like to add this application?")? {
                     matching_apps.push((name, bus_name.into()));
                 } else {
                     continue;
