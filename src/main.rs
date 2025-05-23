@@ -2,14 +2,14 @@ use argh::FromArgs;
 use atspi::{
     connection::set_session_accessibility,
     proxy::accessible::{AccessibleProxy, ObjectRefExt},
-    zbus::{proxy::CacheProperties, Connection},
-    AccessibilityConnection, Role,
+    zbus::proxy::CacheProperties,
+    Role,
 };
 use display_tree::{AsTree, DisplayTree, Style};
 use futures::executor::block_on;
 use futures::future::try_join_all;
 use std::vec;
-use zbus::names::BusName;
+use zbus::{names::BusName, Connection};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 type ArgResult<T> = std::result::Result<T, String>;
@@ -132,52 +132,87 @@ async fn get_registry_accessible<'a>(conn: &Connection) -> Result<AccessibleProx
     Ok(registry)
 }
 
+async fn get_root_accessible<'c>(
+    bus_name: BusName<'c>,
+    conn: &'c Connection,
+) -> Result<AccessibleProxy<'c>> {
+    let root_accessible = AccessibleProxy::builder(conn)
+        .destination(bus_name)?
+        .path(ACCESSIBLE_ROOT)?
+        .interface(ACCESSIBLE_INTERFACE)?
+        .cache_properties(CacheProperties::No)
+        .build()
+        .await?;
+
+    Ok(root_accessible)
+}
+
 /// Select the bus name to be used
 #[derive(FromArgs)]
 struct AccessibleBusName {
     /// the bus name or application name to be used
     /// (default: org.a11y.atspi.Registry)
-    #[argh(positional, from_str_fn(parse_bus_name))]
-    bus_name: zbus::names::BusName<'static>,
+    #[argh(positional, default = "String::new()")]
+    bus_name: String,
 
-    /// whether to print the tree
+    /// whether to print the tree(s) of accessible objects
     #[argh(switch, short = 'p')]
     print_tree: bool,
 }
 
 /// Parse the bus name from the command line argument
-fn parse_bus_name(name: &str) -> ArgResult<BusName<'static>> {
+fn parse_bus_name(name: String, conn: &Connection) -> ArgResult<Vec<(String, BusName<'static>)>> {
     // If the name is empty, use the default bus name
     if name.is_empty() {
-        match BusName::try_from(REGISTRY_DEST) {
-            Ok(name) => return Ok(name.to_owned()),
+        let bus_name = match BusName::try_from(REGISTRY_DEST) {
+            Ok(name) => name.to_owned(),
             Err(e) => return Err(format!("Invalid bus name: {REGISTRY_DEST} ({e})")),
         };
+
+        return Ok(vec![(REGISTRY_DEST.to_string(), bus_name)]);
     }
 
-    match BusName::try_from(name) {
-        Ok(name) => Ok(name.to_owned()),
+    match BusName::try_from(name.clone()) {
+        Ok(bus_name) => Ok(vec![(name, bus_name.to_owned())]),
         _ => {
-            // If the name is not a valid bus-name, try to parse it as an application name
-            bus_name_from_app_name(name)
+            // If the name is not a valid bus-name, try find it as an application name
+            from_app_name(name, conn)
         }
     }
 }
 
+fn get_user_yn_response(question: &str) -> ArgResult<bool> {
+    println!("{question} (Y/n)");
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .expect("Failed to read line");
+    let answer = answer.trim().to_lowercase();
+    if answer == "y" || answer == "yes" || answer.is_empty() {
+        Ok(true)
+    } else if answer == "n" || answer == "no" {
+        Ok(false)
+    } else {
+        Err(format!("Invalid answer: {answer}"))
+    }
+}
+
 /// BusName from application name
-fn bus_name_from_app_name(candidate_name: &str) -> ArgResult<BusName<'static>> {
-    let a11y = block_on(AccessibilityConnection::new()).map_err(|e| e.to_string())?;
-    let conn = a11y.connection();
+fn from_app_name(
+    sought_after: String,
+    conn: &Connection,
+) -> ArgResult<Vec<(String, BusName<'static>)>> {
     let registry_accessible = block_on(get_registry_accessible(conn)).map_err(|e| e.to_string())?;
-
     let mut apps = block_on(registry_accessible.get_children()).map_err(|e| e.to_string())?;
-
-    // get vec in reverse order - newest apps first
+    // get apps in reverse order - most recently entered apps first
     apps.reverse();
 
-    // turn the vec into vec of AccessibleProxies
+    // We might find multiple applications with the same name, so we want to ask the user about each
+    // of them. We will store the matching applications here.
+    let mut matching_apps: Vec<(String, BusName<'static>)> = Vec::new();
+
     for app in apps {
-        let bus_name = app.name.clone();
+        let bus_name = app.name.to_owned();
         let acc_proxy = block_on(app.into_accessible_proxy(conn));
         let acc_proxy = match acc_proxy {
             Ok(acc_proxy) => acc_proxy,
@@ -198,47 +233,94 @@ fn bus_name_from_app_name(candidate_name: &str) -> ArgResult<BusName<'static>> {
             }
         };
 
-        match (name == candidate_name, name.contains(candidate_name)) {
-            (true, _) => return Ok(BusName::from(bus_name)),
-            (false, true) => {
-                // If the name contains the candidate name, ask the user
-                println!("Found application: {name}");
-                println!("Do you want to use this application? (Y/n)");
-                let mut answer = String::new();
-                std::io::stdin()
-                    .read_line(&mut answer)
-                    .expect("Failed to read line");
-                let answer = answer.trim().to_lowercase();
-                if answer == "y" || answer == "yes" || answer.is_empty() {
-                    return Ok(BusName::from(bus_name));
-                } else if answer == "n" || answer == "no" {
-                    continue;
+        match (
+            name == sought_after,
+            name.to_lowercase() == sought_after.to_lowercase(),
+            name.to_lowercase().contains(&sought_after.to_lowercase()),
+        ) {
+            // Perfect match
+            (true, _, _) => matching_apps.push((name, bus_name.into())),
+
+            // Case-insensitive match
+            (false, true, _) => {
+                println!("Sought {sought_after}, found application: {name}");
+
+                if get_user_yn_response("Would you like to add this application? (Y/n)")? {
+                    matching_apps.push((name, bus_name.into()));
                 } else {
-                    return Err(format!("Invalid answer: {answer}"));
+                    continue;
                 }
             }
-            (false, false) => continue,
+
+            // Case-insensitive partial match
+            (false, false, true) => {
+                println!("Sought {sought_after}, partially matches application: {name}");
+                if get_user_yn_response("Would you like to add this application? (Y/n)")? {
+                    matching_apps.push((name, bus_name.into()));
+                } else {
+                    continue;
+                }
+            }
+            // No match
+            (false, false, false) => {
+                continue;
+            }
         };
     }
-    Err(format!("No application found with name: {candidate_name}"))
+
+    if matching_apps.is_empty() {
+        return Err(format!("No application found with name: {sought_after}"));
+    }
+    Ok(matching_apps)
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args: AccessibleBusName = argh::from_env();
-    let bus_name = args.bus_name.clone();
-    println!("Using bus name: {bus_name}");
-
     set_session_accessibility(true).await?;
-    let a11y = AccessibilityConnection::new().await?;
-    let conn = a11y.connection();
-    let root_accessible = get_root_accessible(conn, &args.bus_name).await?;
 
-    println!("Properties of the root accessible object:");
+    let a11y = atspi::AccessibilityConnection::new().await?;
+    let conn = a11y.connection();
+
+    let args: AccessibleBusName = argh::from_env();
+    let applications = parse_bus_name(args.bus_name.clone(), conn)?;
+    let applications2 = applications.clone();
+
+    if applications.is_empty() {
+        return Err("No application found".into());
+    }
+
+    for app in applications {
+        let (name, bus_name) = app;
+        let acc_proxy = get_root_accessible(bus_name.clone(), conn).await?;
+        println!("Application: {name} ({bus_name}) - Accessible Properties of its root object:");
+        table_of_accessible_properties(&acc_proxy).await?;
+        println!();
+    }
+
+    if args.print_tree {
+        for app in applications2 {
+            let (name, bus_name) = app;
+            let acc_proxy = get_root_accessible(bus_name.clone(), conn).await?;
+            println!("Application: {name} ({bus_name}) - Tree of Accessible Objects:");
+
+            println!("Press 'Enter' to print the tree...");
+            let _ = std::io::stdin().read_line(&mut String::new());
+            let tree = A11yNode::from_accessible_proxy_iterative(acc_proxy).await?;
+
+            println!("{}", AsTree::new(&tree));
+            println!();
+        }
+    }
+
+    Ok(())
+}
+
+/// Print the accessible properties of the given `AccessibleProxy`
+async fn table_of_accessible_properties(acc_proxy: &AccessibleProxy<'_>) -> Result<()> {
     let empty = "--- No value ---".to_string();
 
     let name_property = {
-        let res = root_accessible.name().await;
+        let res = acc_proxy.name().await;
         match res {
             Ok(name) if name.is_empty() => empty.clone(),
             Ok(name) => name,
@@ -246,7 +328,7 @@ async fn main() -> Result<()> {
         }
     };
     let description_property = {
-        let res = root_accessible.description().await;
+        let res = acc_proxy.description().await;
         match res {
             Ok(description) if description.is_empty() => empty.clone(),
             Ok(description) => description,
@@ -254,7 +336,7 @@ async fn main() -> Result<()> {
         }
     };
     let locale_property = {
-        let res = root_accessible.locale().await;
+        let res = acc_proxy.locale().await;
         match res {
             Ok(locale) if locale.is_empty() => empty.clone(),
             Ok(locale) => locale,
@@ -262,7 +344,7 @@ async fn main() -> Result<()> {
         }
     };
     let accessible_id_property = {
-        let res = root_accessible.accessible_id().await;
+        let res = acc_proxy.accessible_id().await;
         match res {
             Ok(accessible_id) if accessible_id.is_empty() => empty.clone(),
             Ok(accessible_id) => accessible_id,
@@ -270,21 +352,21 @@ async fn main() -> Result<()> {
         }
     };
     let child_count_property = {
-        let res = root_accessible.child_count().await;
+        let res = acc_proxy.child_count().await;
         match res {
             Ok(child_count) => child_count.to_string(),
             Err(e) => format!("Error: {e}"),
         }
     };
     let parent_property = {
-        let res = root_accessible.parent().await;
+        let res = acc_proxy.parent().await;
         match res {
             Ok(parent) => format!("{parent:?}"),
             Err(e) => format!("Error: {e}"),
         }
     };
     let help_text_property = {
-        let res = root_accessible.help_text().await;
+        let res = acc_proxy.help_text().await;
         match res {
             Ok(help_text) if help_text.is_empty() => empty.clone(),
             Ok(help_text) => help_text,
@@ -330,30 +412,5 @@ async fn main() -> Result<()> {
     // Print the bottom border
     println!("{horizontal_border}");
 
-    if args.print_tree {
-        println!("Press 'Enter' to print the tree...");
-        let _ = std::io::stdin().read_line(&mut String::new());
-        println!("Construct a tree of accessible objects of the bus name\n");
-
-        let tree = A11yNode::from_accessible_proxy_iterative(root_accessible).await?;
-
-        println!("{}", AsTree::new(&tree));
-    }
-
     Ok(())
-}
-
-async fn get_root_accessible<'a>(
-    conn: &'a Connection,
-    bus_name: &BusName<'a>,
-) -> Result<AccessibleProxy<'a>> {
-    let root_accessible = AccessibleProxy::builder(conn)
-        .destination(bus_name)?
-        .path(ACCESSIBLE_ROOT)?
-        .interface(ACCESSIBLE_INTERFACE)?
-        .cache_properties(CacheProperties::No)
-        .build()
-        .await?;
-
-    Ok(root_accessible)
 }
