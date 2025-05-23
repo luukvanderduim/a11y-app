@@ -5,18 +5,34 @@ Small utility to print properties on an accessible application (or the whole bus
 ## Example output
 
 ```console
-luuk@n ~> a11y-app kate
-Using bus name: :1.217
-Properties of the root accessible object:
+luuk@n ~> a11y-app kat
+Sought kat, partially matches application: kate
+Would you like to add this application? (Y/n)
+
+Sought kat, partially matches application: kate
+Would you like to add this application? (Y/n)
+
+Application: kate (:1.49) - Accessible Properties of its root object:
 +----------------+-------------------------------------------------------------------------------------------------------------------------------------------------+
 | Name:          | kate                                                                                                                                            |
 | Description:   | /usr/bin/kate                                                                                                                                   |
 | Locale:        | Error: org.freedesktop.DBus.Error.UnknownInterface: Interface org.a11y.atspi.Accessible was not found in object /org/a11y/atspi/accessible/root |
 | Accessible ID: | org.kde.kate                                                                                                                                    |
 | Child count:   | 1                                                                                                                                               |
-| Parent:        | ObjectRef { name: OwnedUniqueName(":1.217"), path: OwnedObjectPath(ObjectPath("/org/a11y/atspi/null")) }                                        |
+| Parent:        | ObjectRef { name: OwnedUniqueName(":1.49"), path: OwnedObjectPath(ObjectPath("/org/a11y/atspi/null")) }                                         |
 | Help text:     | --- No value ---                                                                                                                                |
 +----------------+-------------------------------------------------------------------------------------------------------------------------------------------------+
+
+Application: kate (:1.48) - Accessible Properties of its root object:
++----------------+-------------------------------------------------------------------------------------------------------------------+
+| Name:          | kate                                                                                                              |
+| Description:   | --- No value ---                                                                                                  |
+| Locale:        | nl_NL.UTF-8                                                                                                       |
+| Accessible ID: | --- No value ---                                                                                                  |
+| Child count:   | 0                                                                                                                 |
+| Parent:        | ObjectRef { name: OwnedUniqueName(":1.3"), path: OwnedObjectPath(ObjectPath("/org/a11y/atspi/accessible/root")) } |
+| Help text:     | --- No value ---                                                                                                  |
++----------------+-------------------------------------------------------------------------------------------------------------------+
 ```
 
 ## Building
