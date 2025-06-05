@@ -20,7 +20,7 @@ const ACCESSIBLE_INTERFACE: &str = "org.a11y.atspi.Accessible";
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct A11yNode {
-    role: Role,
+    role: Option<Role>,
     children: Vec<A11yNode>,
 }
 
@@ -53,7 +53,7 @@ impl A11yNode {
         // two horizontal chars to mimic `tree`
         writeln!(
             f,
-            "{}{} {}",
+            "{}{} {:?}",
             style.char_set.horizontal, style.char_set.horizontal, self.role
         )?;
 
@@ -78,7 +78,38 @@ impl A11yNode {
 
         // If the stack has an `AccessibleProxy`, we take the last.
         while let Some(ap) = stack.pop() {
-            let child_objects = ap.get_children().await?;
+            let destination = ap.inner().destination();
+            let mut node_name = format!("node: Unknown node on {destination}");
+            if let Ok(name) = ap.name().await {
+                node_name = format!("node: {name} on {destination}");
+            }
+
+            let child_objects = ap.get_children().await;
+            let child_objects = match child_objects {
+                // Ok can also be an empty vector, which is fine.
+                Ok(children) => children,
+                Err(e) => {
+                    eprintln!(
+                        "Error getting children of {node_name}: {e} -- continuing with next node."
+                    );
+                    continue;
+                }
+            };
+
+            if child_objects.is_empty() {
+                // If there are no children, we can get the role and continue.
+                let role = ap.get_role().await.ok();
+
+                // Create a node with the role and no children.
+                nodes.push(A11yNode {
+                    role,
+                    children: Vec::new(),
+                });
+                continue;
+            }
+
+            // Very likely to succeed because the error can only happen if the property cache is enabled,
+            // which we disable in `into_accessible_proxy`.
             let mut children_proxies = try_join_all(
                 child_objects
                     .into_iter()
@@ -86,18 +117,28 @@ impl A11yNode {
             )
             .await?;
 
-            let roles = try_join_all(children_proxies.iter().map(|child| child.get_role())).await?;
+            // The `futures_util::future::try_join_all` docs say:
+            // "If any future returns an error then all other futures will be canceled and an error will be returned immediately."
+            let roles = try_join_all(children_proxies.iter().map(|child| child.get_role())).await;
+            let roles = match roles {
+                Ok(roles) => roles,
+                Err(e) => {
+                    eprintln!("Error getting roles of \"{node_name}\"'s children, error: {e} -- continuing with next node.");
+                    continue;
+                }
+            };
             stack.append(&mut children_proxies);
-
+            // Now we have the roles of thea children, we can create `A11yNode`s for them.
             let children = roles
                 .into_iter()
                 .map(|role| A11yNode {
-                    role,
+                    role: Some(role),
                     children: Vec::new(),
                 })
                 .collect::<Vec<_>>();
 
-            let role = ap.get_role().await?;
+            // Finaly get this node's role and create an `A11yNode` with it.
+            let role = ap.get_role().await.ok();
             nodes.push(A11yNode { role, children });
         }
 
@@ -297,14 +338,33 @@ async fn main() -> Result<()> {
         println!();
     }
 
+    // if args.print_tree {
+    //     loop {
+    //         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+    //         for app in &applications2 {
+    //             let (name, bus_name) = app;
+    //             let acc_proxy = get_root_accessible(bus_name.clone(), conn).await?;
+    //             println!("Application: {name} ({bus_name}) - Tree of Accessible Objects:");
+
+    //             // println!("Press 'Enter' to print the tree...");
+    //             // let _ = std::io::stdin().read_line(&mut String::new());
+    //             let tree = A11yNode::from_accessible_proxy_iterative(acc_proxy).await?;
+
+    //             println!("{}", AsTree::new(&tree));
+    //             println!();
+    //         }
+    //     }
+    // }
+
     if args.print_tree {
-        for app in applications2 {
+        for app in &applications2 {
             let (name, bus_name) = app;
             let acc_proxy = get_root_accessible(bus_name.clone(), conn).await?;
             println!("Application: {name} ({bus_name}) - Tree of Accessible Objects:");
 
-            println!("Press 'Enter' to print the tree...");
-            let _ = std::io::stdin().read_line(&mut String::new());
+            // println!("Press 'Enter' to print the tree...");
+            // let _ = std::io::stdin().read_line(&mut String::new());
             let tree = A11yNode::from_accessible_proxy_iterative(acc_proxy).await?;
 
             println!("{}", AsTree::new(&tree));
