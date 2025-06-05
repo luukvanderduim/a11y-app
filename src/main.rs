@@ -7,6 +7,7 @@ use atspi::{
 };
 use display_tree::{AsTree, DisplayTree, Style};
 use futures::executor::block_on;
+use futures::future::join_all;
 use futures::future::try_join_all;
 use std::vec;
 use zbus::{names::BusName, Connection};
@@ -117,22 +118,13 @@ impl A11yNode {
             )
             .await?;
 
-            // The `futures_util::future::try_join_all` docs say:
-            // "If any future returns an error then all other futures will be canceled and an error will be returned immediately."
-            let roles = try_join_all(children_proxies.iter().map(|child| child.get_role())).await;
-            let roles = match roles {
-                Ok(roles) => roles,
-                Err(e) => {
-                    eprintln!("Error getting roles of \"{node_name}\"'s children, error: {e} -- continuing with next node.");
-                    continue;
-                }
-            };
+            let roles = join_all(children_proxies.iter().map(|child| child.get_role())).await;
             stack.append(&mut children_proxies);
-            // Now we have the roles of thea children, we can create `A11yNode`s for them.
+            // Now we have the role results of the child nodes, we can create `A11yNode`s for them.
             let children = roles
                 .into_iter()
                 .map(|role| A11yNode {
-                    role: Some(role),
+                    role: role.ok(),
                     children: Vec::new(),
                 })
                 .collect::<Vec<_>>();
@@ -343,37 +335,20 @@ async fn main() -> Result<()> {
     }
 
     if args.print_tree_loop {
+        println!("Press 'Enter' to print the tree continuously...");
+        let _ = std::io::stdin().read_line(&mut String::new());
+
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-
-            for app in &applications2 {
-                let (name, bus_name) = app;
-                let acc_proxy = get_root_accessible(bus_name.clone(), conn).await?;
-                println!("Application: {name} ({bus_name}) - Tree of Accessible Objects:");
-
-                // println!("Press 'Enter' to print the tree...");
-                // let _ = std::io::stdin().read_line(&mut String::new());
-                let tree = A11yNode::from_accessible_proxy_iterative(acc_proxy).await?;
-
-                println!("{}", AsTree::new(&tree));
-                println!();
-            }
+            print_tree(conn, &applications2).await?;
         }
     }
 
     if args.print_tree {
-        for app in &applications2 {
-            let (name, bus_name) = app;
-            let acc_proxy = get_root_accessible(bus_name.clone(), conn).await?;
-            println!("Application: {name} ({bus_name}) - Tree of Accessible Objects:");
+        println!("Press 'Enter' to print the tree...");
+        let _ = std::io::stdin().read_line(&mut String::new());
 
-            // println!("Press 'Enter' to print the tree...");
-            // let _ = std::io::stdin().read_line(&mut String::new());
-            let tree = A11yNode::from_accessible_proxy_iterative(acc_proxy).await?;
-
-            println!("{}", AsTree::new(&tree));
-            println!();
-        }
+        print_tree(conn, &applications2).await?;
     }
 
     Ok(())
@@ -476,5 +451,20 @@ async fn table_of_accessible_properties(acc_proxy: &AccessibleProxy<'_>) -> Resu
     // Print the bottom border
     println!("{horizontal_border}");
 
+    Ok(())
+}
+
+// Print application(s) tree
+async fn print_tree(conn: &Connection, apps: &[(String, BusName<'static>)]) -> Result<()> {
+    for app in apps {
+        let (name, bus_name) = app;
+        let acc_proxy = get_root_accessible(bus_name.clone(), conn).await?;
+        println!("Application: {name} ({bus_name}) - Tree of Accessible Objects:");
+
+        let tree = A11yNode::from_accessible_proxy_iterative(acc_proxy).await?;
+
+        println!("{}", AsTree::new(&tree));
+        println!();
+    }
     Ok(())
 }
