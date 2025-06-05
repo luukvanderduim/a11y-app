@@ -199,6 +199,10 @@ struct AccessibleBusName {
     /// whether to print the tree(s) of accessible objects
     #[argh(switch, short = 'p')]
     print_tree: bool,
+
+    /// whether to print the tree(s) of accessible objects continuously
+    #[argh(switch, short = 'c')]
+    print_tree_loop: bool,
 }
 
 /// Parse the bus name from the command line argument
@@ -338,24 +342,24 @@ async fn main() -> Result<()> {
         println!();
     }
 
-    // if args.print_tree {
-    //     loop {
-    //         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    if args.print_tree_loop {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
-    //         for app in &applications2 {
-    //             let (name, bus_name) = app;
-    //             let acc_proxy = get_root_accessible(bus_name.clone(), conn).await?;
-    //             println!("Application: {name} ({bus_name}) - Tree of Accessible Objects:");
+            for app in &applications2 {
+                let (name, bus_name) = app;
+                let acc_proxy = get_root_accessible(bus_name.clone(), conn).await?;
+                println!("Application: {name} ({bus_name}) - Tree of Accessible Objects:");
 
-    //             // println!("Press 'Enter' to print the tree...");
-    //             // let _ = std::io::stdin().read_line(&mut String::new());
-    //             let tree = A11yNode::from_accessible_proxy_iterative(acc_proxy).await?;
+                // println!("Press 'Enter' to print the tree...");
+                // let _ = std::io::stdin().read_line(&mut String::new());
+                let tree = A11yNode::from_accessible_proxy_iterative(acc_proxy).await?;
 
-    //             println!("{}", AsTree::new(&tree));
-    //             println!();
-    //         }
-    //     }
-    // }
+                println!("{}", AsTree::new(&tree));
+                println!();
+            }
+        }
+    }
 
     if args.print_tree {
         for app in &applications2 {
